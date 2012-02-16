@@ -6,31 +6,37 @@ import getpass
 import struct
 import string
 
-
-s = ''
-commandword = {'IPMSG_NOOPERATION':'0','IPMSG_BR_ENTRY':'1','IPMSG_BR_EXIT':'2','IPMSG_ANSENTRY':'3','IPMSG_SENDMSG':'32','IPMSG_RECVMSG':'33'}
+PORT = 2425
+PROTOCOL_VERSION = "1"
+commandword = {'IPMSG_NOOPERATION':'0','IPMSG_BR_ENTRY':'1','IPMSG_BR_EXIT':'2','IPMSG_ANSENTRY':'3','IPMSG_SENDMSG':'32','IPMSG_RECVMSG':'33','IPMSG_SENDMSG_WITHCHECK':'288'}
 
 hostlist = []
-charsetlist= [None] * 1024
 		
-def init():
+def init(socket_handle):
+    #print 'protocol init function start'
     msgnum = str(int(time.time()))
-    protocolversion = '1'
     sender = getpass.getuser()
     hostname = socket.gethostname()
     commandkey = commandword['IPMSG_NOOPERATION']
-    print protocolversion , ':' , msgnum , ':' , sender , ':' , hostname , ':' , commandkey , ':'
-    msg = protocolversion + ':' + msgnum + ':' + sender + ':' + hostname + ':' + commandkey + ':'
-    s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-    s.setsockopt(socket.SOL_SOCKET, socket.SO_BROADCAST, 1) 
-    s.sendto(msg, ('255.255.255.255', 2425))
+    #print "#init > " , PROTOCOL_VERSION , ':' , msgnum , ':' , sender , ':' , hostname , ':' , commandkey , ':'
+    msg = PROTOCOL_VERSION + ':' + msgnum + ':' + sender + ':' + hostname + ':' + commandkey + ':'
+    socket_handle.sendto(msg, ('255.255.255.255', 2425))
     
     msgnum = str(int(time.time()))
     commandkey = commandword['IPMSG_BR_ENTRY']
-    print protocolversion , ':' , msgnum , ':' , sender , ':' , hostname , ':' , commandkey , ':'
-    msg = protocolversion + ':' + msgnum + ':' + sender + ':' + hostname + ':' + commandkey + ':'
-    s.sendto(msg, ('255.255.255.255', 2425))
-    s.close()
+    #print "#init > " , PROTOCOL_VERSION , ':' , msgnum , ':' , sender , ':' , hostname , ':' , commandkey , ':'
+    msg = PROTOCOL_VERSION + ':' + msgnum + ':' + sender + ':' + hostname + ':' + commandkey + ':'
+    socket_handle.sendto(msg, ('255.255.255.255', 2425))
+    while True:
+        try:
+            data, (addr, port) = socket_handle.recvfrom(1024)
+            #print repr(data)
+            strlist = data.split(':')
+            optresp(strlist[4], addr)
+        except socket.timeout:
+            break
+
+    #print '#protocol init function stop'
     
 def logout():
     msgnum = str(int(time.time()))
@@ -38,32 +44,44 @@ def logout():
     sender = getpass.getuser()
     hostname = socket.gethostname()
     commandkey = commandword['IPMSG_BR_EXIT']
-    print protocolversion , ':' , msgnum , ':' , sender , ':' , hostname , ':' , commandkey , ':'
-    msg = protocolversion + ':' + msgnum + ':' + sender + ':' + hostname + ':' + commandkey + ':'
+    #print "#logout > " , PROTOCOL_VERSION , ':' , msgnum , ':' , sender , ':' , hostname , ':' , commandkey , ':'
+    msg = PROTOCOL_VERSION + ':' + msgnum + ':' + sender + ':' + hostname + ':' + commandkey + ':'
     s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
     s.setsockopt(socket.SOL_SOCKET, socket.SO_BROADCAST, 1) 
     s.sendto(msg, ('255.255.255.255', 2425))
     s.close()
-    
-def sendmsg(host, msg):
+
+def sendrecvmsg(client_socket, host, msg):
     msgnum = str(int(time.time()))
-    protocolversion = '1'
+    sender = getpass.getuser()
+    hostname = socket.gethostname()
+    commandkey = commandword['IPMSG_RECVMSG']
+    #print "#sendrecvmsg > " , PROTOCOL_VERSION , ':' , msgnum , ':' , sender , ':' , hostname , ':' , commandkey , ':', msg
+    msg = PROTOCOL_VERSION + ':' + msgnum + ':' + sender + ':' + hostname + ':' + commandkey + ':' + msg
+    client_socket.sendto(msg, (host, PORT))
+
+def sendansentry(client_socket, host):
+    msgnum = str(int(time.time()))
+    sender = getpass.getuser()
+    hostname = socket.gethostname()
+    commandkey = commandword['IPMSG_ANSENTRY']
+    #print "#sendansentry > " , PROTOCOL_VERSION , ':' , msgnum , ':' , sender , ':' , hostname , ':' , commandkey , ':'
+    msg = PROTOCOL_VERSION + ':' + msgnum + ':' + sender + ':' + hostname + ':' + commandkey + ':' 
+    client_socket.sendto(msg, (host, PORT))
+
+def sendmsg(client_socket, host, msg):
+    msgnum = str(int(time.time()))
     sender = getpass.getuser()
     hostname = socket.gethostname()
     commandkey = commandword['IPMSG_SENDMSG']
     if host in hostlist :
         index = hostlist.index(host)
-        charset = charsetlist[index]
-        print charset
-        msg = msg.encode(charset)
     else :
-        print "sendmsg error"
-    print protocolversion , ':' , msgnum , ':' , sender , ':' , hostname , ':' , commandkey , ':', msg
-    msg = protocolversion + ':' + msgnum + ':' + sender + ':' + hostname + ':' + commandkey + ':' + msg
-    s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-    s.setsockopt(socket.SOL_SOCKET, socket.SO_BROADCAST, 1) 
-    s.sendto(msg, (host, 2425))
-    s.close()
+        pass
+        #print "sendmsg > host not in hostlist"
+    #print "#sendmsg > " , PROTOCOL_VERSION , ':' , msgnum , ':' , sender , ':' , hostname , ':' , commandkey , ':', msg
+    msg = PROTOCOL_VERSION + ':' + msgnum + ':' + sender + ':' + hostname + ':' + commandkey + ':' + msg
+    client_socket.sendto(msg, (host, PORT))
     
 def addhost(host):
     if host not in hostlist:
@@ -73,42 +91,20 @@ def delhost(host):
     if host in hostlist:
         hostlist.remove(host)
         
-def opthost(command, host):
+def optresp(command, host):
     if command == commandword['IPMSG_ANSENTRY'] :
         addhost(host)
     elif command == commandword['IPMSG_BR_EXIT'] :
         delhost(host)
     elif command == commandword['IPMSG_SENDMSG'] :
         addhost(host)
-
-def getcharset(str):
-    try:
-        str.decode('utf8')
-        return 'utf8'
-    except:
-        pass
-    try:
-        str.decode('gbk')
-        return 'gbk'
-    except:
-        pass
-        return 'unicode'
-
-def addcharset(hostname, charset):
-    if hostname in hostlist:
-        index = hostlist.index(hostname)
-        charsetlist[index] = charset
+    elif command == commandword['IPMSG_BR_ENTRY'] :
+        addhost(host)
     else :
-        addhost(hostname)
-        index = hostlist.index(hostname)
-        charsetlist[index] = charset
+        #print '#optresp>invoid resp'
+        pass
 
 def printhost():
     for index, host in enumerate(hostlist):
-        print index, ":", host
-def printcharset():
-    for index, charset in enumerate(charsetlist):
-        if charset is None :
-            pass
-        else :
-            print index, ":", charset
+        pass
+        #print index, ":", host
